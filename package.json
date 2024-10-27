@@ -1,0 +1,45 @@
+{
+  "name": "nextjs-sentiment-analysis",
+  "version": "1.0.0",
+  "type": "module",
+  "module": "esnext",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "server": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));' server/index.ts",
+    "r-backend": "cd backend && Rscript run.R"
+  },
+  "dependencies": {
+    "@types/multer": "^1.4.12",
+    "axios": "latest",
+    "express": "latest",
+    "framer-motion": "^11.11.10",
+    "fs": "latest",
+    "multer": "^1.4.5-lts.1",
+    "next": "latest",
+    "openai": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-hook-form": "^7.53.1",
+    "ts-node": "latest",
+    "typescript": "latest"
+  },
+  "devDependencies": {
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14"
+  },
+  "ts-node": {
+    "esm": true,
+    "compilerOptions": {
+      "module": "nodenext",
+      "moduleResolution": "nodenext",
+      "allowJs": true,
+      "outDir": "./dist"
+    }
+  }
+}
