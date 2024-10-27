@@ -66,13 +66,23 @@ interface SuccessResponse {
       const result = {
         success: true,
         data: {
-          isRomantic: response.data?.romantic ?? false,
+          isRomantic: Array.isArray(response.data?.romantic) 
+            ? response.data?.romantic[0] 
+            : response.data?.romantic ?? false,
           score: Math.round((response.data?.sentiment_score ?? 0) * 100),
           stats: {
-            totalSentences: response.data?.details?.total_sentences ?? 0,
-            positiveSentences: response.data?.details?.positive_sentences ?? 0,
-            negativeSentences: response.data?.details?.negative_sentences ?? 0,
-            neutralSentences: response.data?.details?.neutral_sentences ?? 0
+            totalSentences: Array.isArray(response.data?.details?.total_sentences) 
+              ? response.data?.details?.total_sentences[0] 
+              : response.data?.details?.total_sentences ?? 0,
+            positiveSentences: Array.isArray(response.data?.details?.positive_sentences)
+              ? response.data?.details?.positive_sentences[0]
+              : response.data?.details?.positive_sentences ?? 0,
+            negativeSentences: Array.isArray(response.data?.details?.negative_sentences)
+              ? response.data?.details?.negative_sentences[0]
+              : response.data?.details?.negative_sentences ?? 0,
+            neutralSentences: Array.isArray(response.data?.details?.neutral_sentences)
+              ? response.data?.details?.neutral_sentences[0]
+              : response.data?.details?.neutral_sentences ?? 0
           }
         }
       };
