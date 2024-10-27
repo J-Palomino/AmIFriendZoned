@@ -1,56 +1,66 @@
-library(sentimentr)  # Make sure this is at the top
+# Required packages
+library(plumber)
+library(sentimentr)
+library(stringr)
 library(jsonlite)
-
 #* @post /sentiment
 function(req, res) {
-  print("Received request body:")
-  print(str(req$body))
-  
   tryCatch({
-    # Parse the JSON if it's a string, otherwise use the body directly
-    if (is.character(req$body$text)) {
-      # Remove any BOM characters and parse JSON
-      clean_text <- gsub("^\xEF\xBB\xBF", "", req$body$text)
-      parsed_data <- fromJSON(clean_text)
-    } else {
-      parsed_data <- req$body
-    }
+    # Get the text from the request
+    text <- req$body$text
     
-    print("Parsed data:")
-    print(str(parsed_data))
+    # Debug print
+    print(paste("Received text:", text))
     
-    # If we have a data frame, convert it to text for sentiment analysis
-    if (is.data.frame(parsed_data)) {
-      text_to_analyze <- parsed_data$text
-      doc_id <- parsed_data$document
-    } else {
-      # Handle single text case
-      text_to_analyze <- req$body$text
-      doc_id <- req$body$document
-    }
+    # Clean the text
+    text <- gsub("\\[|\\]|\\{|\\}|\\\"", "", text)
+    text <- gsub("\\s+", " ", text)
     
-    print("Text to analyze:")
-    print(text_to_analyze)
+    # Split into sentences and analyze
+    sentences <- get_sentences(text)
+    sentiment_scores <- sentiment(sentences)
     
-    # Perform sentiment analysis
-    sentiment_scores <- sentiment(text_to_analyze)
-    
-    print("Sentiment scores:")
+    # Debug print
+    print("Sentiment analysis complete")
     print(sentiment_scores)
+    
+    # Calculate metrics
+    total_sentences <- nrow(sentiment_scores)
+    positive_sentences <- sum(sentiment_scores$sentiment > 0)
+    negative_sentences <- sum(sentiment_scores$sentiment < 0)
+    neutral_sentences <- sum(sentiment_scores$sentiment == 0)
+    avg_sentiment <- mean(sentiment_scores$sentiment)
     
     # Create response
     result <- list(
-      document = doc_id,
-      romantic = mean(sentiment_scores$sentiment) > 0.5,
-      sentiment_score = mean(sentiment_scores$sentiment)
+      romantic = avg_sentiment > 0.2,
+      sentiment_score = avg_sentiment,
+      details = list(
+        total_sentences = total_sentences,
+        positive_sentences = positive_sentences,
+        negative_sentences = negative_sentences,
+        neutral_sentences = neutral_sentences
+      )
     )
+    
+    # Debug print
+    print("Sending response:")
+    print(result)
     
     return(result)
     
   }, error = function(e) {
     print(paste("Error:", e$message))
-    print(paste("Error call:", e$call))
+    print(paste("Stack:", e$call))
     res$status <- 400
-    return(list(error = e$message))
+    return(list(
+      error = e$message,
+      details = list(
+        total_sentences = 0,
+        positive_sentences = 0,
+        negative_sentences = 0,
+        neutral_sentences = 0
+      )
+    ))
   })
 }
