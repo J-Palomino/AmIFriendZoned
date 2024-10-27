@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import axios from 'axios';
 import fs from 'fs';
+import cors from 'cors'; 
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -20,6 +21,14 @@ interface SuccessResponse {
       }
     }
   }
+//   app.use(cors({
+//     origin: 'http://localhost:3000', // Your frontend URL
+//     methods: ['GET', 'POST'],
+//     allowedHeaders: ['Content-Type']
+//   }));
+
+  // only fort DEV
+  app.use(cors())
 
   app.post('/api/upload', upload.single('file'), async (req, res) => {
     try {
@@ -72,6 +81,7 @@ interface SuccessResponse {
       res.status(200).json(result);
 
     } catch (error: any) {
+
       console.error('Error details:', {
         message: error.message,
         response: error.response?.data,
@@ -83,7 +93,9 @@ interface SuccessResponse {
         error: 'Error processing file',
         details: error.response?.data || error.message 
       });
+      
     }
+    
 });
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);

@@ -13,6 +13,7 @@
   "dependencies": {
     "@types/multer": "^1.4.12",
     "axios": "latest",
+    "cors": "^2.8.5",
     "express": "latest",
     "framer-motion": "^11.11.10",
     "fs": "latest",
@@ -26,6 +27,7 @@
     "typescript": "latest"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
     "@types/express": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
