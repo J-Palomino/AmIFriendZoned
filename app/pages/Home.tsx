@@ -3,21 +3,37 @@ import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import axios from 'axios';
 import { motion } from 'framer-motion';
+import Image from 'next/image';
 
 const NEXT_API = process.env.NEXT_API || 'http://localhost:3001';
 
+// Helper function to get first value from possible array
+const getValue = <T,>(value: T | T[]): T => {
+  return Array.isArray(value) ? value[0] : value;
+};
+
 type AnalysisResult = {
-  success: boolean;
+  success: boolean | boolean[];
   data: {
-    isRomantic: boolean;
-    score: number;
+    isRomantic: boolean | boolean[];
+    score: number | number[];
     stats: {
-      negativeSentences: number;
-      neutralSentences: number;
-      positiveSentences: number;
-      totalSentences: number;
+      totalSentences: number | number[];
+      positiveSentences: number | number[];
+      negativeSentences: number | number[];
+      neutralSentences: number | number[];
     }
   }
+};
+
+type UploadedImage = {
+  preview: string;
+  file: File;
+};
+
+type Message = {
+  document: string;  // Format: "S-xxxxx" or "R-xxxxx"
+  text: string;
 };
 
 // Stat Box Component
@@ -40,28 +56,124 @@ const StatBox = ({ label, value, color, percentage }: {
 
 const Homepage = () => {
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [images, setImages] = useState<UploadedImage[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { register, handleSubmit } = useForm();
 
-  const onSubmit = async (data: any) => {
-    const formData = new FormData();
-    formData.append('file', data.file[0]);
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files) return;
+
+    const file = files[0];
+    if (file.type === 'application/json') {
+      // Handle JSON file
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const text = e.target?.result as string;
+          const json = JSON.parse(text);
+          
+          // Validate JSON structure
+          if (!Array.isArray(json)) {
+            throw new Error('JSON must be an array of messages');
+          }
+          
+          // Validate each message has required fields
+          const isValidFormat = json.every(msg => 
+            typeof msg === 'object' && 
+            msg !== null &&
+            'document' in msg &&
+            'text' in msg &&
+            typeof msg.document === 'string' &&
+            typeof msg.text === 'string' &&
+            (msg.document.startsWith('S-') || msg.document.startsWith('R-'))
+          );
+
+          if (!isValidFormat) {
+            throw new Error('Invalid message format');
+          }
+          
+          setIsProcessing(true);
+          const formData = new FormData();
+          formData.append('text', JSON.stringify(json));
+          
+          const response = await axios.post(`${NEXT_API}/api/upload`, formData);
+          
+          if (response.data.success) {
+            setResult(response.data);
+          } else {
+            setError(response.data.error || 'Analysis failed');
+          }
+        } catch (error) {
+          console.error(error);
+          setError(error instanceof Error ? error.message : 'Invalid JSON file');
+        } finally {
+          setIsProcessing(false);
+        }
+      };
+      reader.readAsText(file);
+    } else if (file.type.startsWith('image/')) {
+      // Handle image files
+      const newImages = Array.from(files).slice(0, 5).map(file => ({
+        preview: URL.createObjectURL(file),
+        file
+      }));
+      setImages(prev => [...prev, ...newImages].slice(0, 5));
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setImages(prev => {
+      const newImages = [...prev];
+      URL.revokeObjectURL(newImages[index].preview);
+      newImages.splice(index, 1);
+      return newImages;
+    });
+  };
+
+  const onSubmit = async () => {
+    if (images.length === 0) return;
+    setIsProcessing(true);
+    setError(null);
 
     try {
+      const formData = new FormData();
+      images.forEach((image, index) => {
+        formData.append('files', image.file);
+      });
+
       const response = await axios.post(`${NEXT_API}/api/upload`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
-      setResult(response.data);
+
+      if (response.data.success) {
+        setResult(response.data);
+      } else {
+        setError(response.data.error || 'Analysis failed');
+      }
     } catch (error) {
       console.error(error);
+      setError('Failed to analyze images');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const renderResults = () => {
-    if (!result) return null;
+    if (!result?.data) return null;
     const { data } = result;
     const { stats } = data;
+    
+    // Extract values safely
+    const isRomantic = getValue(data.isRomantic);
+    const score = getValue(data.score);
+    const totalSentences = getValue(stats.totalSentences);
+    const positiveSentences = getValue(stats.positiveSentences);
+    const negativeSentences = getValue(stats.negativeSentences);
+    const neutralSentences = getValue(stats.neutralSentences);
     
     return (
       <motion.div
@@ -74,13 +186,13 @@ const Homepage = () => {
           initial={{ scale: 0.9 }}
           animate={{ scale: 1 }}
           className={`p-6 rounded-xl border-4 border-black text-center ${
-            data.isRomantic ? 'bg-pink-200' : 'bg-blue-200'
+            isRomantic ? 'bg-pink-200' : 'bg-blue-200'
           }`}
         >
           <h2 className="text-3xl font-black">
-            {data.isRomantic ? "There's Romance! 💕" : "Just Friends! 🤝"}
+            {isRomantic ? "There's Romance! 💕" : "Just Friends! 🤝"}
           </h2>
-          <p className="text-xl mt-2">Confidence Score: {data.score}%</p>
+          <p className="text-xl mt-2">Confidence Score: {Math.round(score)}%</p>
         </motion.div>
 
         {/* Stats Visualization */}
@@ -89,19 +201,19 @@ const Homepage = () => {
           <div className="h-8 rounded-full border-4 border-black overflow-hidden flex">
             <motion.div
               initial={{ width: 0 }}
-              animate={{ width: `${(stats.positiveSentences / stats.totalSentences) * 100}%` }}
+              animate={{ width: `${(positiveSentences / totalSentences) * 100}%` }}
               className="bg-green-400"
               transition={{ delay: 0.2 }}
             />
             <motion.div
               initial={{ width: 0 }}
-              animate={{ width: `${(stats.neutralSentences / stats.totalSentences) * 100}%` }}
+              animate={{ width: `${(neutralSentences / totalSentences) * 100}%` }}
               className="bg-gray-400"
               transition={{ delay: 0.4 }}
             />
             <motion.div
               initial={{ width: 0 }}
-              animate={{ width: `${(stats.negativeSentences / stats.totalSentences) * 100}%` }}
+              animate={{ width: `${(negativeSentences / totalSentences) * 100}%` }}
               className="bg-red-400"
               transition={{ delay: 0.6 }}
             />
@@ -111,21 +223,21 @@ const Homepage = () => {
           <div className="grid grid-cols-3 gap-4">
             <StatBox
               label="Positive"
-              value={stats.positiveSentences}
+              value={positiveSentences}
               color="bg-green-100"
-              percentage={(stats.positiveSentences / stats.totalSentences) * 100}
+              percentage={(positiveSentences / totalSentences) * 100}
             />
             <StatBox
               label="Neutral"
-              value={stats.neutralSentences}
+              value={neutralSentences}
               color="bg-gray-100"
-              percentage={(stats.neutralSentences / stats.totalSentences) * 100}
+              percentage={(neutralSentences / totalSentences) * 100}
             />
             <StatBox
               label="Negative"
-              value={stats.negativeSentences}
+              value={negativeSentences}
               color="bg-red-100"
-              percentage={(stats.negativeSentences / stats.totalSentences) * 100}
+              percentage={(negativeSentences / totalSentences) * 100}
             />
           </div>
         </div>
@@ -134,7 +246,10 @@ const Homepage = () => {
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          onClick={() => setResult(null)}
+          onClick={() => {
+            setResult(null);
+            setImages([]);
+          }}
           className="w-full bg-gradient-to-r from-purple-400 to-purple-500 text-white font-black text-lg py-4 px-6 rounded-lg border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all duration-150"
         >
           Analyze Another Conversation
@@ -192,31 +307,107 @@ const Homepage = () => {
               </motion.p>
 
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
-                <motion.div
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="relative"
-                >
-                  <input 
-                    type="file" 
-                    {...register('file')} 
-                    className="w-full p-4 border-4 border-black rounded-lg bg-gradient-to-r from-blue-200 to-blue-300 
-                    file:mr-4 file:py-2 file:px-6 
-                    file:rounded-full file:border-2 
-                    file:border-black file:text-sm 
-                    file:font-bold file:bg-white 
-                    file:text-black hover:file:bg-gray-100 
-                    cursor-pointer shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
-                  />
-                </motion.div>
+                <div className="space-y-4">
+                  <motion.div
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="relative"
+                  >
+                    <input 
+                      type="file"
+                      multiple
+                      accept="image/*,application/json"
+                      onChange={handleFileUpload}
+                      className="w-full p-4 border-4 border-black rounded-lg bg-gradient-to-r from-blue-200 to-blue-300 
+                      file:mr-4 file:py-2 file:px-6 
+                      file:rounded-full file:border-2 
+                      file:border-black file:text-sm 
+                      file:font-bold file:bg-white 
+                      file:text-black hover:file:bg-gray-100 
+                      cursor-pointer shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                    />
+                  </motion.div>
+
+                  <div className="text-center text-sm text-gray-600">
+                    Upload images of your conversation or a JSON file
+                    <div className="mt-1 text-xs">
+                      Supported formats: Images (.jpg, .png, etc.) or JSON file
+                    </div>
+                  </div>
+
+                  {/* Example JSON format */}
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="text-xs bg-gray-100 p-3 rounded-lg"
+                  >
+                    <div className="font-bold mb-1">Example JSON format:</div>
+                    <pre className="overflow-x-auto">
+{`[
+  {
+    "document": "S-00001",
+    "text": "Hey, want to grab coffee sometime?"
+  },
+  {
+    "document": "R-00002",
+    "text": "Sure, that would be fun! As friends, right? 😊"
+  }
+]`}
+                    </pre>
+                    <div className="mt-2 text-xs text-gray-600">
+                      Note: Document IDs should start with "S-" for sent messages or "R-" for received messages
+                    </div>
+                  </motion.div>
+                </div>
+
+                {/* Image Previews */}
+                {images.length > 0 && (
+                  <div className="grid grid-cols-3 gap-4">
+                    {images.map((image, index) => (
+                      <div key={index} className="relative group">
+                        <Image
+                          src={image.preview}
+                          alt={`Preview ${index + 1}`}
+                          width={100}
+                          height={100}
+                          className="w-full h-24 object-cover rounded-lg border-2 border-black"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeImage(index)}
+                          className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 
+                            opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {images.length >= 5 && (
+                  <p className="text-red-500 text-sm">Maximum 5 images allowed</p>
+                )}
+
+                {error && (
+                  <p className="text-red-500 text-sm text-center">{error}</p>
+                )}
 
                 <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   type="submit"
-                  className="w-full bg-gradient-to-r from-green-400 to-green-500 text-black font-black text-lg py-4 px-6 rounded-lg border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:shadow-none transition-all duration-150"
+                  disabled={images.length === 0 && !isProcessing}
+                  className={`w-full bg-gradient-to-r from-green-400 to-green-500 
+                    text-black font-black text-lg py-4 px-6 rounded-lg border-4 
+                    border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] 
+                    hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] 
+                    active:shadow-none transition-all duration-150
+                    ${(images.length === 0 && !isProcessing) ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  Analyze Messages
+                  {isProcessing ? 'Processing...' : 'Analyze Messages'}
                 </motion.button>
               </form>
             </>
