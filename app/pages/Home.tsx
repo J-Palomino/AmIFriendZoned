@@ -57,6 +57,7 @@ const StatBox = ({ label, value, color, percentage }: {
 const Homepage = () => {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [images, setImages] = useState<UploadedImage[]>([]);
+  const [jsonData, setJsonData] = useState<Message[] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { register, handleSubmit } = useForm();
@@ -74,42 +75,28 @@ const Homepage = () => {
           const text = e.target?.result as string;
           const json = JSON.parse(text);
           
-          // Validate JSON structure
+          // Validate structure
           if (!Array.isArray(json)) {
             throw new Error('JSON must be an array of messages');
           }
           
-          // Validate each message has required fields
-          const isValidFormat = json.every(msg => 
-            typeof msg === 'object' && 
-            msg !== null &&
-            'document' in msg &&
-            'text' in msg &&
-            typeof msg.document === 'string' &&
-            typeof msg.text === 'string' &&
-            (msg.document.startsWith('S-') || msg.document.startsWith('R-'))
-          );
-
-          if (!isValidFormat) {
-            throw new Error('Invalid message format');
-          }
+          // Validate each message
+          json.forEach(msg => {
+            if (!msg.document || !msg.text || 
+                typeof msg.document !== 'string' || 
+                typeof msg.text !== 'string' ||
+                !(msg.document.startsWith('S-') || msg.document.startsWith('R-'))) {
+              throw new Error('Invalid message format');
+            }
+          });
           
-          setIsProcessing(true);
-          const formData = new FormData();
-          formData.append('text', JSON.stringify(json));
-          
-          const response = await axios.post(`${NEXT_API}/api/upload`, formData);
-          
-          if (response.data.success) {
-            setResult(response.data);
-          } else {
-            setError(response.data.error || 'Analysis failed');
-          }
+          setJsonData(json);  // Store JSON data
+          setImages([]);  // Clear any existing images
+          setError(null);
         } catch (error) {
-          console.error(error);
+          console.error('Error processing JSON:', error);
           setError(error instanceof Error ? error.message : 'Invalid JSON file');
-        } finally {
-          setIsProcessing(false);
+          setJsonData(null);
         }
       };
       reader.readAsText(file);
@@ -120,6 +107,8 @@ const Homepage = () => {
         file
       }));
       setImages(prev => [...prev, ...newImages].slice(0, 5));
+      setJsonData(null);  // Clear any existing JSON data
+      setError(null);
     }
   };
 
@@ -131,32 +120,52 @@ const Homepage = () => {
       return newImages;
     });
   };
-
   const onSubmit = async () => {
-    if (images.length === 0) return;
+    if (!jsonData && images.length === 0) return;
     setIsProcessing(true);
     setError(null);
-
+  
     try {
-      const formData = new FormData();
-      images.forEach((image, index) => {
-        formData.append('files', image.file);
-      });
-
-      const response = await axios.post(`${NEXT_API}/api/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      if (response.data.success) {
-        setResult(response.data);
-      } else {
-        setError(response.data.error || 'Analysis failed');
+      if (jsonData) {
+        // Debug log
+        console.log('Sending JSON data:', jsonData);
+        
+        // Send the JSON data directly, no need to stringify again
+        const response = await axios.post(`${NEXT_API}/api/upload`, {
+          text: jsonData  // Send the parsed JSON directly
+        }, {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (response.data.success) {
+          setResult(response.data);
+        } else {
+          setError(response.data.error || 'Analysis failed');
+        }
+      } else if (images.length > 0) {
+        // Handle image submission
+        const formData = new FormData();
+        images.forEach((image, index) => {
+          formData.append('files', image.file);
+        });
+  
+        const response = await axios.post(`${NEXT_API}/api/upload`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+  
+        if (response.data.success) {
+          setResult(response.data);
+        } else {
+          setError(response.data.error || 'Analysis failed');
+        }
       }
     } catch (error) {
-      console.error(error);
-      setError('Failed to analyze images');
+      console.error('Error during submission:', error);
+      setError(error instanceof Error ? error.message : 'Failed to analyze content');
     } finally {
       setIsProcessing(false);
     }
@@ -249,6 +258,7 @@ const Homepage = () => {
           onClick={() => {
             setResult(null);
             setImages([]);
+            setJsonData(null);
           }}
           className="w-full bg-gradient-to-r from-purple-400 to-purple-500 text-white font-black text-lg py-4 px-6 rounded-lg border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all duration-150"
         >
@@ -315,7 +325,6 @@ const Homepage = () => {
                   >
                     <input 
                       type="file"
-                      multiple
                       accept="image/*,application/json"
                       onChange={handleFileUpload}
                       className="w-full p-4 border-4 border-black rounded-lg bg-gradient-to-r from-blue-200 to-blue-300 
@@ -399,13 +408,13 @@ const Homepage = () => {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   type="submit"
-                  disabled={images.length === 0 && !isProcessing}
+                  disabled={!jsonData && images.length === 0 || isProcessing}
                   className={`w-full bg-gradient-to-r from-green-400 to-green-500 
                     text-black font-black text-lg py-4 px-6 rounded-lg border-4 
                     border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] 
                     hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] 
                     active:shadow-none transition-all duration-150
-                    ${(images.length === 0 && !isProcessing) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    ${(!jsonData && images.length === 0) || isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   {isProcessing ? 'Processing...' : 'Analyze Messages'}
                 </motion.button>

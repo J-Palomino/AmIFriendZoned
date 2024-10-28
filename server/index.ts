@@ -8,105 +8,58 @@ const app = express();
 const upload = multer({ dest: 'uploads/' });
 const PORT = 3001; 
 
-interface SuccessResponse {
-    success: true;
-    data: {
-      isRomantic: boolean;      // true if romantic, false if friendzone
-      score: number;            // sentiment score from 0-100
-      stats: {
-        totalSentences: number; // total number of sentences analyzed
-        positiveSentences: number;
-        negativeSentences: number;
-        neutralSentences: number;
-      }
-    }
-  }
-//   app.use(cors({
-//     origin: 'http://localhost:3000', // Your frontend URL
-//     methods: ['GET', 'POST'],
-//     allowedHeaders: ['Content-Type']
-//   }));
+// Add body parsing middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-  // only fort DEV
-  app.use(cors())
+// only for DEV
+app.use(cors())
 
-  app.post('/api/upload', upload.single('file'), async (req, res) => {
+app.post('/api/upload', async (req, res) => {
+    console.log('Received sentiment analysis request');
+    
     try {
-      // Convert file contents to text
-      const fileContents = req.file ? await fs.promises.readFile(req.file.path, 'utf8') : '';
+      if (!req.body.text || !Array.isArray(req.body.text)) {
+        throw new Error('Invalid input: expecting array of text documents');
+      }
+      console.log('Received text:', req.body);
+      // Combine all texts with proper spacing
+      const cleanText = req.body.text
+        .map((doc: { document: string, text: string }) => doc.text)
+        .join(' ')
+        .replace(/[\r\n]+/g, ' ')
       
-      // Clean up the text and split into sentences
-      const cleanText = fileContents
-        .trim()
-        .replace(/[\r\n]+/g, ' ')  // Replace newlines with spaces
-        .replace(/\s+/g, ' ');     // Remove extra spaces
-      
-      // Create the payload
-      const payload = {
-        document: 1,
+      // Send to R server
+      const response = await axios.post('http://0.0.0.0:8000/sentiment', {
         text: cleanText
-      };
-      
-      console.log('Sending payload:', payload);
-      
-      const response = await axios.post('http://0.0.0.0:8000/sentiment', payload, {
+      }, {
         headers: {
           'Content-Type': 'application/json'
         }
       });
-
-      console.log('Received response:', response.data);
-
-      // Clean up uploaded file
-      if (req.file?.path) {
-        await fs.promises.unlink(req.file.path);
-      }
-
-      // Format the response with safe fallbacks
-      const result = {
-        success: true,
-        data: {
-          isRomantic: Array.isArray(response.data?.romantic) 
-            ? response.data?.romantic[0] 
-            : response.data?.romantic ?? false,
-          score: Math.round((response.data?.sentiment_score ?? 0) * 100),
-          stats: {
-            totalSentences: Array.isArray(response.data?.details?.total_sentences) 
-              ? response.data?.details?.total_sentences[0] 
-              : response.data?.details?.total_sentences ?? 0,
-            positiveSentences: Array.isArray(response.data?.details?.positive_sentences)
-              ? response.data?.details?.positive_sentences[0]
-              : response.data?.details?.positive_sentences ?? 0,
-            negativeSentences: Array.isArray(response.data?.details?.negative_sentences)
-              ? response.data?.details?.negative_sentences[0]
-              : response.data?.details?.negative_sentences ?? 0,
-            neutralSentences: Array.isArray(response.data?.details?.neutral_sentences)
-              ? response.data?.details?.neutral_sentences[0]
-              : response.data?.details?.neutral_sentences ?? 0
-          }
-        }
-      };
-      
-      console.log('Sending result:', result);
-      res.status(200).json(result);
-
+  
+      console.log('Received response from R server:', response.data);
+      res.status(200).json(response.data);
+  
     } catch (error: any) {
-
-      console.error('Error details:', {
+      console.error('Error in sentiment analysis:', {
         message: error.message,
         response: error.response?.data,
-        stack: error.stack,
-        rawResponse: error.response // Add full response for debugging
-      });
-      res.status(500).json({ 
-        success: false,
-        error: 'Error processing file',
-        details: error.response?.data || error.message 
+        stack: error.stack
       });
       
+      res.status(500).json({ 
+        success: false,
+        error: 'Error processing sentiment analysis',
+        details: error.response?.data || error.message 
+      });
     }
-    
-});
+  });
+
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log('Endpoints:');
+  console.log('  POST /api/sentiment - Analyze text sentiment');
+  console.log('  POST /api/upload - Process uploaded files');
 });

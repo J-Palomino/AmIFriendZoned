@@ -1,38 +1,25 @@
-# Required packages
+# Required libraries
 library(plumber)
 library(dplyr)
 library(tidytext)
 library(tidyverse)
 library(jsonlite)
-library(rmarkdown)
 library(stringr)
 
 #* @post /sentiment
 function(req, res) {
   tryCatch({
-    # Load AFINN lexicon directly from file
-    data_dir <- file.path(rappdirs::user_data_dir("textdata"))
-    afinn_file <- file.path(data_dir, "AFINN-111.txt")
+    # Debug raw request
+    print("Raw request body:")
+    print(req$body)
     
-    if (!file.exists(afinn_file)) {
-      stop("AFINN lexicon not found. Please run setup.R first")
-    }
-    
-      # Read and format AFINN lexicon
-    afinn <- read.table(
-      afinn_file,
-      header = FALSE,
-      col.names = c("word", "value"),
-      stringsAsFactors = FALSE,
-      sep = "\t"  # Specify tab separator
-    )
-    
-    # Validate input
+    # Validate text input
     if (is.null(req$body$text)) {
+      print("No text found in request body")
       res$status <- 400
       return(list(
         success = FALSE,
-        error = "No text provided",
+        error = "No text provided in request",
         data = list(
           isRomantic = FALSE,
           score = 0,
@@ -46,51 +33,67 @@ function(req, res) {
       ))
     }
 
-    # Get text from request
-    input_text <- req$body$text
-    doc_id <- req$body$document %||% 1
+    # Parse the JSON input
+    messages <- jsonlite::fromJSON(req$body$text)
     
-    # Create data frame from input
+    print("Parsed messages:")
+    print(messages)
+
+    # Validate messages structure
+    if (!is.data.frame(messages) && !is.list(messages)) {
+      stop("Invalid messages format")
+    }
+
+    # Validate each message
+    for (msg in messages) {
+      if (!is.list(msg) || 
+          is.null(msg$document) || 
+          is.null(msg$text) ||
+          !is.character(msg$document) || 
+          !is.character(msg$text)) {
+        stop("Each message must have 'document' and 'text' fields")
+      }
+    }
+
+    # Parse the JSON input
+    messages <- fromJSON(req$body$text)
+    
+    # Combine all texts into one data frame
     df <- data.frame(
-      document = doc_id,
-      text = input_text,
+      document = sapply(messages, function(x) x$document),
+      text = sapply(messages, function(x) x$text),
       stringsAsFactors = FALSE
     )
     
     # Process the text data
     words_df <- df %>%
-      mutate(text = as.character(text)) %>%
-      unnest_tokens(word, text)
+      unnest_tokens(word, text) %>%
+      anti_join(stop_words, by = "word")
     
-    # Perform word-level sentiment analysis
+    # Perform sentiment analysis
     sentiment_scores <- words_df %>%
       inner_join(afinn, by = "word") %>%
       group_by(document) %>%
-      summarize(
-        sentiment_score = mean(value),
-        total_words = n(),
-        positive_words = sum(value > 0),
-        negative_words = sum(value < 0),
-        neutral_words = sum(value == 0)
-      )
+      summarize(sentiment_score = sum(value))
     
-    # Get sentence-level statistics
-    sentences <- unlist(strsplit(input_text, "[.!?]+\\s*"))
+    # Split text into sentences and analyze each
+    sentences <- unlist(strsplit(paste(df$text, collapse = " "), "[.!?]+\\s*"))
     sentence_sentiments <- sapply(sentences, function(sentence) {
-      words <- unlist(strsplit(tolower(sentence), "\\s+"))
-      sentiment_words <- words[words %in% afinn$word]
-      if(length(sentiment_words) == 0) return(0)
-      mean(afinn$value[match(sentiment_words, afinn$word)])
+      words <- unlist(strsplit(tolower(sentence), "\\W+"))
+      words <- words[words != ""]
+      sentiment <- sum(afinn$value[match(words, afinn$word)], na.rm = TRUE)
+      return(sentiment)
     })
     
-    # Calculate sentence-level metrics
+    # Calculate statistics
     total_sentences <- length(sentences)
-    positive_sentences <- sum(sentence_sentiments > 0)
-    negative_sentences <- sum(sentence_sentiments < 0)
-    neutral_sentences <- sum(sentence_sentiments == 0)
+    positive_sentences <- sum(sentence_sentiments > 0, na.rm = TRUE)
+    negative_sentences <- sum(sentence_sentiments < 0, na.rm = TRUE)
+    neutral_sentences <- sum(sentence_sentiments == 0, na.rm = TRUE)
     
     # Calculate overall sentiment score (normalized to 0-1 range)
-    normalized_score <- (sentiment_scores$sentiment_score + 5) / 10
+    mean_sentiment <- mean(sentiment_scores$sentiment_score, na.rm = TRUE)
+    normalized_score <- (mean_sentiment + 5) / 10  # Assuming scores range from -5 to 5
     
     # Determine if romantic based on sentiment patterns
     is_romantic <- (
@@ -100,27 +103,25 @@ function(req, res) {
     )
     
     # Format successful response
-  result <- list(
-      success = TRUE,  # Remove array wrapper
+    result <- list(
+      success = TRUE,
       data = list(
-        isRomantic = as.logical(is_romantic)[1],  # Take first element
-        score = as.numeric(normalized_score * 100)[1],  # Take first element
+        isRomantic = as.logical(is_romantic),
+        score = as.numeric(normalized_score * 100),  # Convert to percentage
         stats = list(
-          totalSentences = as.numeric(total_sentences)[1],
-          positiveSentences = as.numeric(positive_sentences)[1],
-          negativeSentences = as.numeric(negative_sentences)[1],
-          neutralSentences = as.numeric(neutral_sentences)[1]
+          totalSentences = as.numeric(total_sentences),
+          positiveSentences = as.numeric(positive_sentences),
+          negativeSentences = as.numeric(negative_sentences),
+          neutralSentences = as.numeric(neutral_sentences)
         )
       )
     )
     
-      # Convert to JSON with auto_unbox=TRUE
-    response <- toJSON(result, auto_unbox = TRUE)
     # Debug logging
     print("Analysis complete. Sending response:")
     print(jsonlite::toJSON(result, auto_unbox = TRUE, pretty = TRUE))
     
-      return(fromJSON(response))
+    return(result)
     
   }, error = function(e) {
     # Log the error
